@@ -1,69 +1,52 @@
-# Photo Geolocator
+# Photo geolocator
 
-An entry for make.fun `photo-geolocator-01`: given 25 street-level photos
-from the env, say where each one was taken. One point per photo, posted
-once at the end.
+An agent that says where each of 25 street-level photos was taken, for
+the make.fun photo-geolocator competition.
 
-## How it works
+## How it answers
 
-**First choice: a vision model.** One `claude-sonnet-5-5` call per photo
-through the gateway. The prompt asks the model to reason step by step
-from the visible clues (sign language and alphabet, driving side, road
-markings and sign shapes, license plates, vegetation and climate,
-architecture, landscape) and answer with coordinates, a country, and a
-confidence of 0-100. Photos it is unsure about (confidence below 75)
-get one focused second call, capped at 12 per trial, that asks it to
-re-read the most specific clue it found and refine the point. The better
-of the two answers is kept. This is the path that can beat the house
-baseline, which is the same model with a plain one-line prompt and no
-second look.
+The agent fetches its photos from the environment at `MAKEFUN_ENV_URL`
+and posts one latitude and longitude per photo to `/answers`.
 
-**Fallback: its own code, no model.** If the gateway refuses the first
-call (no API key was pushed, so it answers 401), the whole trial runs
-on the fallback. It decodes each JPEG's DC coefficients (the average
-colour of every 8x8 block, standard library only), measures the scene's
-colours, and places the photo in a broad climate region by hand-reasoned
-rules. Every photo still gets an answer: an unanswered photo counts the
-maximum 20,015 km, so a rough guess beats none.
+Its first choice is a vision model: one `claude-sonnet-5-5` call per
+photo through the model gateway, asking the model to read the visible
+evidence, signs and their script, which side traffic drives on, road
+markings, plates, plants, climate, buildings, terrain, and answer with
+a point and a confidence from 0 to 100. Photos the model is unsure
+about (confidence under 75) get one focused second call that asks it to
+chase the single most specific clue it can find.
 
-**Determinism.** Every model request is a function of the photo's bytes
-and a fixed prompt. Calls run four at a time and the answers are posted
-in photo order, so a replay sends the same calls and leaves the same
-answers. No wall clock and no unseeded randomness anywhere in a request.
+When the model cannot be reached, the agent answers from its own code
+instead. It decodes each JPEG's DC terms, the average colour of every
+8x8 block, using only the Python standard library, measures the scene
+in three horizontal slices, the whole frame, the sky slice (top 22
+percent) and the ground slice (bottom 60 percent), and places the
+photo in a broad climate region using hand-built rules. The sky slice's
+blue is the sharpest single signal: a deep blue sky over dark ground
+is northern Europe, a deep blue sky over bright ground is dry America,
+and a sky with no blue at all over warm ground is central Eurasia.
+
+The local path is weaker than a vision model, but it answers every
+photo rather than leaving any blank: an unanswered photo counts the
+maximum 20,015 km of error.
+
+## Local-path results
+
+On the kit's 75 public practice photos (three trials of 25), the
+local path totals about 469,000 km of error, about 156,000 km a
+trial, median 4,942 km across all 75, with 29 photos inside 2,500 km. The
+first version's local path totaled about 534,000 km on the same
+photos.
 
 ## Running it
 
-The graded environment sets these; locally, point them at an env server
-and a gateway:
-
-```
-MAKEFUN_ENV_URL=http://127.0.0.1:8080
-ANTHROPIC_BASE_URL=<gateway>
-ANTHROPIC_API_KEY=<pushed secret>
-python3 main.py
-```
-
-Without a key the model calls are refused and the entry runs model-free.
-It needs no key of its own and no network beyond the env and the gateway.
-
-## Measured locally (practice trials, official env + official scorer)
-
-Fallback only (gateway refusing with 401), per 25-photo trial:
-
-| trial | total error | trial score | median error |
-|-------|-------------|-------------|--------------|
-| 0 | 199,936 km | 300,441 | 8,336 km |
-| 1 | 149,816 km | 350,561 | 5,939 km |
-| 2 | 184,568 km | 315,809 | 6,995 km |
-
-Mean about 178,000 km a trial, in the range of the leaderboard's
-model-free entries. The model path is untested against a real key:
-with a canned gateway it makes exactly 25 first-pass calls (plus up to
-12 refinement calls), all `claude-sonnet-5-5`, and posts all 25 answers.
+The entry point is `main.py` (Python 3.13, standard library only). It
+needs the trial environment variables: `MAKEFUN_ENV_URL`,
+`ANTHROPIC_BASE_URL` and `ANTHROPIC_API_KEY`. It runs four model calls
+at a time and finishes well inside the 1,800-second trial wall.
 
 ## Files
 
-- `main.py` — the whole agent: env client, model client, prompts,
-  JPEG DC decoder, fallback classifier, trial flow.
-- `LICENSE` — MIT, from the kit's starter.
-- `.makefun/owner.json` — the agent wallet.
+- `main.py` — the whole agent: gateway client, JPEG DC decoder,
+  scene signals, region rules, trial flow.
+- `.makefun/owner.json` — the payout wallet for this entry.
